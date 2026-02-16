@@ -1,0 +1,736 @@
+[
+  {
+    "id": "f7ecac449f8fcc8a",
+    "type": "tab",
+    "label": "PCS Transmitter SNMP",
+    "disabled": false,
+    "info": "Poll PCS transmitter SNMP OIDs and decode with PCS-ELECTRONICS-MIB.",
+    "env": [
+      {
+        "name": "PCS_TX_IP",
+        "type": "str",
+        "value": "192.168.1.140"
+      },
+      {
+        "name": "PCS_SNMP_COMMUNITY",
+        "type": "str",
+        "value": "public"
+      },
+      {
+        "name": "PCS_MIB_DIR",
+        "type": "str",
+        "value": "/home/dn/WORK/FrontPanelController/FrontPanelFirmware-SAMD51/pcs-node-red"
+      }
+    ]
+  },
+  {
+    "id": "9a2af5de368fca73",
+    "type": "inject",
+    "z": "f7ecac449f8fcc8a",
+    "name": "Poll every 30s",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "2",
+    "topic": "",
+    "payloadType": "date",
+    "x": 130,
+    "y": 100,
+    "wires": [
+      [
+        "2f71e15b0d46a2ec"
+      ]
+    ]
+  },
+  {
+    "id": "2f71e15b0d46a2ec",
+    "type": "function",
+    "z": "f7ecac449f8fcc8a",
+    "name": "Build SNMP command",
+    "func": "const q = (s) => `'${String(s).replace(/'/g, `'\"'\"'`)}'`;\n\nconst ip = env.get(\"PCS_TX_IP\") || \"192.168.1.140\";\nconst community = env.get(\"PCS_SNMP_COMMUNITY\") || \"public\";\nconst mibDir = env.get(\"PCS_MIB_DIR\") || \"/home/dn/WORK/FrontPanelController/FrontPanelFirmware-SAMD51/pcs-node-red\";\nconst scriptPath = `${mibDir.replace(/\\/$/, \"\")}/poll_pcs_snmp.sh`;\n\nmsg.payload = `${q(scriptPath)} ${q(ip)} ${q(community)} ${q(mibDir)}`;\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 370,
+    "y": 100,
+    "wires": [
+      [
+        "5d6effcd0903cf8a"
+      ]
+    ]
+  },
+  {
+    "id": "5d6effcd0903cf8a",
+    "type": "exec",
+    "z": "f7ecac449f8fcc8a",
+    "command": "bash",
+    "addpay": true,
+    "append": "",
+    "useSpawn": "false",
+    "timer": "",
+    "winHide": false,
+    "oldrc": false,
+    "name": "run poll_pcs_snmp.sh",
+    "x": 600,
+    "y": 100,
+    "wires": [
+      [
+        "e1292d53f3050745"
+      ],
+      [
+        "ff0517de94fbad57"
+      ],
+      [
+        "6d802cf93a5fcbf8"
+      ]
+    ]
+  },
+  {
+    "id": "e1292d53f3050745",
+    "type": "function",
+    "z": "f7ecac449f8fcc8a",
+    "name": "Decode PCS telemetry",
+    "func": "const keys = [\n    \"pcsDeviceObjectId\",\n    \"txForwardPower\",\n    \"txReflectedPower\",\n    \"txPowerPercent\",\n    \"txInternalTemperature\",\n    \"txExternalTemperature\",\n    \"txAlarmBits\",\n    \"txPAConnected\",\n    \"txAlarmCodeNow\",\n    \"txAlarmCodeLatched\",\n    \"txExciterVoltage\",\n    \"txPAVoltage\",\n    \"txPA2Voltage\",\n    \"txExciterCurrent\",\n    \"txPACurrent\",\n    \"txAudioInputSource\",\n    \"txAudioGain\",\n    \"txVULeft\",\n    \"txVURight\",\n    \"txStereoChannels\",\n    \"txFrequencykHz\"\n];\n\nconst lines = String(msg.payload || \"\")\n    .split(/\\r?\\n/)\n    .map((s) => s.trim())\n    .filter(Boolean);\n\nif (lines.length === 0) {\n    node.warn(\"SNMP command returned empty stdout. Check 'SNMP stderr' and 'SNMP return code' debug nodes.\");\n    return null;\n}\n\nif (lines.length < keys.length) {\n    node.error(`Expected ${keys.length} SNMP lines, got ${lines.length}`, msg);\n    return null;\n}\n\nconst raw = {};\nkeys.forEach((k, idx) => {\n    raw[k] = String(lines[idx] || \"\").replace(/^\"|\"$/g, \"\");\n});\n\nconst num = (v) => {\n    const n = Number(v);\n    return Number.isFinite(n) ? n : null;\n};\n\nconst alarmMap = {\n    0: \"noAlarm\",\n    1: \"extTemp\",\n    2: \"highSWR\",\n    3: \"intTemp\",\n    4: \"highCurrent\",\n    5: \"highVoltage\",\n    6: \"noExciter\"\n};\n\nconst audioSourceMap = {\n    0: \"analogInput\",\n    1: \"aesEbu\",\n    2: \"i2s1\",\n    3: \"i2s2\"\n};\n\nconst stereoMap = {\n    0: \"mpxLeft\",\n    1: \"mpxRight\",\n    2: \"stereo\",\n    3: \"monoLeftPlusRight\"\n};\n\nconst txForwardPowerRaw = num(raw.txForwardPower);\nconst txReflectedPowerRaw = num(raw.txReflectedPower);\nconst txInternalTemperatureRaw = num(raw.txInternalTemperature);\nconst txExternalTemperatureRaw = num(raw.txExternalTemperature);\nconst txExciterVoltageRaw = num(raw.txExciterVoltage);\nconst txPAVoltageRaw = num(raw.txPAVoltage);\nconst txPA2VoltageRaw = num(raw.txPA2Voltage);\nconst txExciterCurrentRaw = num(raw.txExciterCurrent);\nconst txPACurrentRaw = num(raw.txPACurrent);\nconst txAudioGainRaw = num(raw.txAudioGain);\nconst txAlarmBits = num(raw.txAlarmBits);\nconst txAlarmCodeNow = num(raw.txAlarmCodeNow);\nconst txAlarmCodeLatched = num(raw.txAlarmCodeLatched);\nconst txAudioInputSource = num(raw.txAudioInputSource);\nconst txStereoChannels = num(raw.txStereoChannels);\nconst txFrequencykHz = num(raw.txFrequencykHz);\n\nmsg.topic = \"pcs/snmp/telemetry\";\nmsg.payload = {\n    timestamp: new Date().toISOString(),\n    source: {\n        ip: env.get(\"PCS_TX_IP\"),\n        community: env.get(\"PCS_SNMP_COMMUNITY\")\n    },\n    raw,\n    device: {\n        objectId: raw.pcsDeviceObjectId\n    },\n    rf: {\n        frequencykHz: txFrequencykHz,\n        frequencyMHz: txFrequencykHz == null ? null : txFrequencykHz / 1000,\n        forwardPowerRaw: txForwardPowerRaw,\n        forwardPowerW: txForwardPowerRaw == null ? null : txForwardPowerRaw / 10,\n        reflectedPowerRaw: txReflectedPowerRaw,\n        reflectedPowerW: txReflectedPowerRaw == null ? null : txReflectedPowerRaw / 10,\n        powerPercent: num(raw.txPowerPercent)\n    },\n    temperature: {\n        internalRaw: txInternalTemperatureRaw,\n        internalC: txInternalTemperatureRaw == null ? null : txInternalTemperatureRaw / 10,\n        externalRaw: txExternalTemperatureRaw,\n        externalC: txExternalTemperatureRaw == null ? null : txExternalTemperatureRaw / 10\n    },\n    alarms: {\n        bits: txAlarmBits,\n        bitsBinary: txAlarmBits == null ? null : (txAlarmBits >>> 0).toString(2).padStart(8, \"0\"),\n        paConnected: num(raw.txPAConnected),\n        codeNow: txAlarmCodeNow,\n        codeNowText: alarmMap[txAlarmCodeNow] || \"unknown\",\n        codeLatched: txAlarmCodeLatched,\n        codeLatchedText: alarmMap[txAlarmCodeLatched] || \"unknown\"\n    },\n    rails: {\n        exciterVoltageRaw: txExciterVoltageRaw,\n        exciterVoltageV: txExciterVoltageRaw == null ? null : txExciterVoltageRaw / 10,\n        paVoltageRaw: txPAVoltageRaw,\n        paVoltageV: txPAVoltageRaw == null ? null : txPAVoltageRaw / 10,\n        pa2VoltageRaw: txPA2VoltageRaw,\n        pa2VoltageV: txPA2VoltageRaw == null ? null : txPA2VoltageRaw / 10,\n        exciterCurrentRaw: txExciterCurrentRaw,\n        exciterCurrentA: txExciterCurrentRaw == null ? null : txExciterCurrentRaw / 10,\n        paCurrentRaw: txPACurrentRaw,\n        paCurrentA: txPACurrentRaw == null ? null : txPACurrentRaw / 10\n    },\n    audio: {\n        inputSource: txAudioInputSource,\n        inputSourceText: audioSourceMap[txAudioInputSource] || \"unknown\",\n        gainRaw: txAudioGainRaw,\n        gainDb: txAudioGainRaw == null ? null : txAudioGainRaw / 10,\n        vuLeft: num(raw.txVULeft),\n        vuRight: num(raw.txVURight),\n        stereoChannels: txStereoChannels,\n        stereoChannelsText: stereoMap[txStereoChannels] || \"unknown\"\n    }\n};\n\nreturn msg;",
+    "outputs": 1,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 860,
+    "y": 100,
+    "wires": [
+      [
+        "827aa3371e4b22af",
+        "fn_map_dashboard_01"
+      ]
+    ]
+  },
+  {
+    "id": "827aa3371e4b22af",
+    "type": "debug",
+    "z": "f7ecac449f8fcc8a",
+    "name": "Telemetry JSON",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 880,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "ff0517de94fbad57",
+    "type": "debug",
+    "z": "f7ecac449f8fcc8a",
+    "name": "SNMP stderr",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "payload",
+    "statusType": "msg",
+    "x": 640,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "6d802cf93a5fcbf8",
+    "type": "debug",
+    "z": "f7ecac449f8fcc8a",
+    "name": "SNMP return code",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "payload",
+    "statusType": "msg",
+    "x": 660,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "fn_map_dashboard_01",
+    "type": "function",
+    "z": "f7ecac449f8fcc8a",
+    "name": "Map telemetry to dashboard",
+    "func": "const p = msg.payload || {};\nconst rf = p.rf || {};\nconst t = p.temperature || {};\nconst a = p.alarms || {};\nconst audio = p.audio || {};\nconst rails = p.rails || {};\n\nconst isNum = (v) => Number.isFinite(v);\nconst fmt = (v, digits = 1, suffix = '') => isNum(v) ? Number(v).toFixed(digits) + suffix : '-';\n\nconst railsText = [\n  'EX ' + fmt(rails.exciterVoltageV, 1, 'V') + ' / ' + fmt(rails.exciterCurrentA, 1, 'A'),\n  'PA ' + fmt(rails.paVoltageV, 1, 'V') + ' / ' + fmt(rails.paCurrentA, 1, 'A'),\n  'PA2 ' + fmt(rails.pa2VoltageV, 1, 'V')\n].join(' | ');\n\nconst out = new Array(18).fill(null);\nout[0] = { payload: isNum(rf.frequencyMHz) ? rf.frequencyMHz.toFixed(1) + ' MHz' : '-' };\nout[1] = { payload: isNum(rf.forwardPowerW) ? rf.forwardPowerW : 0 };\nout[2] = { payload: isNum(rf.reflectedPowerW) ? rf.reflectedPowerW : 0 };\nout[3] = { payload: isNum(rf.powerPercent) ? rf.powerPercent : 0 };\nout[4] = { payload: isNum(t.internalC) ? t.internalC : 0 };\nout[5] = { payload: isNum(t.externalC) ? t.externalC : 0 };\nout[6] = { payload: a.codeNowText || '-' };\nout[7] = { payload: a.codeLatchedText || '-' };\nout[8] = { payload: a.bitsBinary || '-' };\nout[9] = { payload: Number(a.paConnected) === 1 ? 'Yes' : 'No' };\nout[10] = { payload: audio.inputSourceText || '-' };\nout[11] = { payload: isNum(audio.gainDb) ? audio.gainDb.toFixed(1) + ' dB' : '-' };\nout[12] = { payload: audio.stereoChannelsText || '-' };\nout[13] = { payload: railsText };\nout[14] = { topic: 'Forward W', payload: isNum(rf.forwardPowerW) ? rf.forwardPowerW : 0 };\nout[15] = { topic: 'Reflected W', payload: isNum(rf.reflectedPowerW) ? rf.reflectedPowerW : 0 };\nout[16] = { topic: 'VU Left %', payload: isNum(audio.vuLeft) ? (audio.vuLeft / 255) * 100 : 0 };\nout[17] = { topic: 'VU Right %', payload: isNum(audio.vuRight) ? (audio.vuRight / 255) * 100 : 0 };\n\nreturn out;",
+    "outputs": 18,
+    "timeout": "",
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1120,
+    "y": 180,
+    "wires": [
+      [
+        "ui_text_freq_01"
+      ],
+      [
+        "ui_gauge_fwd_01"
+      ],
+      [
+        "ui_gauge_refl_01"
+      ],
+      [
+        "ui_gauge_pct_01"
+      ],
+      [
+        "ui_gauge_tint_01"
+      ],
+      [
+        "ui_gauge_text_01"
+      ],
+      [
+        "ui_text_alarm_now_01"
+      ],
+      [
+        "ui_text_alarm_latched_01"
+      ],
+      [
+        "ui_text_alarm_bits_01"
+      ],
+      [
+        "ui_text_pa_connected_01"
+      ],
+      [
+        "ui_text_audio_source_01"
+      ],
+      [
+        "ui_text_audio_gain_01"
+      ],
+      [
+        "ui_text_stereo_mode_01"
+      ],
+      [
+        "ui_text_rails_01"
+      ],
+      [
+        "ui_chart_rf_01"
+      ],
+      [
+        "ui_chart_rf_01"
+      ],
+      [
+        "ui_chart_vu_01"
+      ],
+      [
+        "ui_chart_vu_01"
+      ]
+    ]
+  },
+  {
+    "id": "ui_tab_pcs_snmp_main",
+    "type": "ui_tab",
+    "name": "PCS Electronics Transmitter Dashboard (Node-RED)",
+    "icon": "dashboard",
+    "disabled": false,
+    "hidden": false
+  },
+  {
+    "id": "ui_group_pcs_summary",
+    "type": "ui_group",
+    "name": "Summary",
+    "tab": "ui_tab_pcs_snmp_main",
+    "order": 1,
+    "disp": true,
+    "width": "12",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "ui_group_pcs_rf",
+    "type": "ui_group",
+    "name": "RF",
+    "tab": "ui_tab_pcs_snmp_main",
+    "order": 3,
+    "disp": true,
+    "width": "12",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "ui_group_pcs_temp",
+    "type": "ui_group",
+    "name": "Temperature",
+    "tab": "ui_tab_pcs_snmp_main",
+    "order": 7,
+    "disp": false,
+    "width": "12",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "ui_group_pcs_alarm",
+    "type": "ui_group",
+    "name": "Alarms",
+    "tab": "ui_tab_pcs_snmp_main",
+    "order": 4,
+    "disp": true,
+    "width": "12",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "ui_group_pcs_audio",
+    "type": "ui_group",
+    "name": "Audio",
+    "tab": "ui_tab_pcs_snmp_main",
+    "order": 6,
+    "disp": true,
+    "width": "12",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "ui_group_pcs_rails",
+    "type": "ui_group",
+    "name": "Rails",
+    "tab": "ui_tab_pcs_snmp_main",
+    "order": 5,
+    "disp": true,
+    "width": "12",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "ui_group_pcs_charts",
+    "type": "ui_group",
+    "name": "Charts",
+    "tab": "ui_tab_pcs_snmp_main",
+    "order": 2,
+    "disp": true,
+    "width": "12",
+    "collapse": false,
+    "className": ""
+  },
+  {
+    "id": "ui_text_freq_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_summary",
+    "order": 1,
+    "width": 12,
+    "height": 3,
+    "name": "",
+    "label": "Frequency",
+    "format": "{{msg.payload}}",
+    "layout": "row-center",
+    "className": "",
+    "style": true,
+    "font": "Arial",
+    "fontSize": "112",
+    "color": "#000000",
+    "x": 1390,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "ui_gauge_fwd_01",
+    "type": "ui_gauge",
+    "z": "f7ecac449f8fcc8a",
+    "name": "",
+    "group": "ui_group_pcs_rf",
+    "order": 1,
+    "width": 4,
+    "height": 3,
+    "gtype": "gage",
+    "title": "Forward Power",
+    "label": "W",
+    "format": "{{value}}",
+    "min": 0,
+    "max": "100",
+    "colors": [
+      "#00b500",
+      "#e6e600",
+      "#ca3838"
+    ],
+    "seg1": "",
+    "seg2": "",
+    "className": "",
+    "x": 1400,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "ui_gauge_refl_01",
+    "type": "ui_gauge",
+    "z": "f7ecac449f8fcc8a",
+    "name": "",
+    "group": "ui_group_pcs_rf",
+    "order": 2,
+    "width": 4,
+    "height": 3,
+    "gtype": "gage",
+    "title": "Reflected Power",
+    "label": "W",
+    "format": "{{value}}",
+    "min": 0,
+    "max": "100",
+    "colors": [
+      "#00b500",
+      "#e6e600",
+      "#ca3838"
+    ],
+    "seg1": "",
+    "seg2": "",
+    "className": "",
+    "x": 1410,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "ui_gauge_pct_01",
+    "type": "ui_gauge",
+    "z": "f7ecac449f8fcc8a",
+    "name": "",
+    "group": "ui_group_pcs_rf",
+    "order": 3,
+    "width": 4,
+    "height": 3,
+    "gtype": "gage",
+    "title": "Power Setpoint",
+    "label": "%",
+    "format": "{{value}}",
+    "min": 0,
+    "max": "100",
+    "colors": [
+      "#00b500",
+      "#e6e600",
+      "#ca3838"
+    ],
+    "seg1": "",
+    "seg2": "",
+    "className": "",
+    "x": 1400,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "ui_gauge_tint_01",
+    "type": "ui_gauge",
+    "z": "f7ecac449f8fcc8a",
+    "name": "",
+    "group": "ui_group_pcs_temp",
+    "order": 1,
+    "width": 6,
+    "height": 3,
+    "gtype": "gage",
+    "title": "Internal Temp",
+    "label": "degC",
+    "format": "{{value}}",
+    "min": 0,
+    "max": "100",
+    "colors": [
+      "#00b500",
+      "#e6e600",
+      "#ca3838"
+    ],
+    "seg1": "",
+    "seg2": "",
+    "className": "",
+    "x": 1380,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "ui_gauge_text_01",
+    "type": "ui_gauge",
+    "z": "f7ecac449f8fcc8a",
+    "name": "",
+    "group": "ui_group_pcs_temp",
+    "order": 2,
+    "width": 6,
+    "height": 3,
+    "gtype": "gage",
+    "title": "External Temp",
+    "label": "degC",
+    "format": "{{value}}",
+    "min": 0,
+    "max": "100",
+    "colors": [
+      "#00b500",
+      "#e6e600",
+      "#ca3838"
+    ],
+    "seg1": "",
+    "seg2": "",
+    "className": "",
+    "x": 1390,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "ui_text_alarm_now_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_alarm",
+    "order": 1,
+    "width": 6,
+    "height": 1,
+    "name": "",
+    "label": "Alarm Now",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1400,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "ui_text_alarm_latched_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_alarm",
+    "order": 2,
+    "width": 6,
+    "height": 1,
+    "name": "",
+    "label": "Alarm Latched",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1420,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "ui_text_alarm_bits_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_alarm",
+    "order": 3,
+    "width": 6,
+    "height": 1,
+    "name": "",
+    "label": "Alarm Bits",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1410,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "ui_text_pa_connected_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_alarm",
+    "order": 4,
+    "width": 6,
+    "height": 1,
+    "name": "",
+    "label": "PA Connected",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1420,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "ui_text_audio_source_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_audio",
+    "order": 1,
+    "width": 4,
+    "height": 1,
+    "name": "",
+    "label": "Input Source",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1410,
+    "y": 440,
+    "wires": []
+  },
+  {
+    "id": "ui_text_audio_gain_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_audio",
+    "order": 2,
+    "width": 4,
+    "height": 1,
+    "name": "",
+    "label": "Audio Gain",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1400,
+    "y": 480,
+    "wires": []
+  },
+  {
+    "id": "ui_text_stereo_mode_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_audio",
+    "order": 3,
+    "width": 4,
+    "height": 1,
+    "name": "",
+    "label": "Stereo Mode",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1410,
+    "y": 520,
+    "wires": []
+  },
+  {
+    "id": "ui_text_rails_01",
+    "type": "ui_text",
+    "z": "f7ecac449f8fcc8a",
+    "group": "ui_group_pcs_rails",
+    "order": 1,
+    "width": 12,
+    "height": 1,
+    "name": "",
+    "label": "Supply Rails",
+    "format": "{{msg.payload}}",
+    "layout": "row-spread",
+    "className": "",
+    "style": false,
+    "font": "",
+    "fontSize": "",
+    "color": "#000000",
+    "x": 1390,
+    "y": 560,
+    "wires": []
+  },
+  {
+    "id": "ui_chart_rf_01",
+    "type": "ui_chart",
+    "z": "f7ecac449f8fcc8a",
+    "name": "RF History",
+    "group": "ui_group_pcs_charts",
+    "order": 1,
+    "width": "12",
+    "height": "6",
+    "label": "RF Power History (W)",
+    "chartType": "line",
+    "legend": "true",
+    "xformat": "HH:mm:ss",
+    "interpolate": "linear",
+    "nodata": "Waiting for data...",
+    "dot": false,
+    "ymin": "0",
+    "ymax": "",
+    "removeOlder": "1",
+    "removeOlderPoints": "",
+    "removeOlderUnit": "3600",
+    "cutout": "0",
+    "useOneColor": false,
+    "useUTC": false,
+    "colors": [
+      "#2ecc71",
+      "#f1c40f",
+      "#3498db",
+      "#e74c3c",
+      "#9b59b6",
+      "#1abc9c",
+      "#95a5a6",
+      "#34495e",
+      "#16a085"
+    ],
+    "outputs": 1,
+    "useDifferentColor": false,
+    "className": "",
+    "x": 1410,
+    "y": 600,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "ui_chart_vu_01",
+    "type": "ui_chart",
+    "z": "f7ecac449f8fcc8a",
+    "name": "VU History",
+    "group": "ui_group_pcs_charts",
+    "order": 2,
+    "width": "12",
+    "height": "6",
+    "label": "VU Left/Right (%)",
+    "chartType": "line",
+    "legend": "true",
+    "xformat": "HH:mm:ss",
+    "interpolate": "linear",
+    "nodata": "Waiting for data...",
+    "dot": false,
+    "ymin": "0",
+    "ymax": "100",
+    "removeOlder": "1",
+    "removeOlderPoints": "",
+    "removeOlderUnit": "3600",
+    "cutout": "0",
+    "useOneColor": false,
+    "useUTC": false,
+    "colors": [
+      "#2980b9",
+      "#8e44ad",
+      "#3498db",
+      "#e74c3c",
+      "#9b59b6",
+      "#1abc9c",
+      "#95a5a6",
+      "#34495e",
+      "#16a085"
+    ],
+    "outputs": 1,
+    "useDifferentColor": false,
+    "className": "",
+    "x": 1400,
+    "y": 640,
+    "wires": [
+      []
+    ]
+  }
+]
